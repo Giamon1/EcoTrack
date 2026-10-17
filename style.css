@@ -751,26 +751,22 @@ canvas#c {
 }
 
 @media (hover: hover) {
-  /* Cards lift slightly */
   .tile:hover, .rw:hover, .box.nr:hover {
     transform: translateY(-3px);
     border-color: var(--g);
     box-shadow: 0 10px 22px rgba(77,154,60,.18);
   }
 
-  /* Leaderboard rows slide a touch */
   .lrow:hover {
     transform: translateX(4px);
     border-color: var(--g);
     box-shadow: 0 6px 16px rgba(77,154,60,.14);
   }
 
-  /* Activity / history / redemption rows */
   .list li:hover {
     background: var(--pl);
   }
 
-  /* Buttons */
   button:not(:disabled):hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 10px rgba(77,154,60,.18);
@@ -783,7 +779,6 @@ canvas#c {
     background: var(--g2);
   }
 
-  /* Nav tabs and login/register tabs */
   .nav button:not(.on):hover,
   .tabs button:not(.on):hover {
     color: var(--tx);
@@ -792,19 +787,16 @@ canvas#c {
     box-shadow: none;
   }
 
-  /* Leaderboard filter chips */
   .chips button:not(.on):hover {
     background: var(--pl);
     color: var(--g2);
   }
 
-  /* Simulator item buttons */
   .items button:not(:disabled):hover {
     background: var(--pl);
     border-color: var(--g);
   }
 
-  /* Misc */
   .av:hover { transform: scale(1.08); }
   .chip:hover { background: #d6ecbf; }
   .logo { transition: transform .2s ease; }
@@ -862,41 +854,39 @@ canvas#c {
   display: block;
 }
 
-.camFrame {
+.camOv {
   position: absolute;
-  top: 17.5%;
-  left: 50%;
-  height: 65%;
-  aspect-ratio: 1;
-  transform: translateX(-50%);
-  border: 3px solid #39ff6a;
-  border-radius: 18px;
-  box-shadow: 0 0 0 999px rgba(0,0,0,.25);
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
 .camRes {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
   background: var(--pl);
   border-radius: 14px;
   padding: 12px 14px;
 }
 
-.camBox summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--g2);
+.cr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
 }
 
-.items button.on,
-.items button.on:not(:disabled):hover {
-  background: var(--g);
-  color: #fff;
-  border-color: var(--g);
+.qty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qty button {
+  padding: 2px 12px;
 }
 
 .qrBig {

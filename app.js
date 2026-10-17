@@ -1,6 +1,7 @@
 /*
  * EcoTrack: student eco tracker with a 3D smart bin simulator
- * Needs three.js (r128) loaded before this file (see index.html).
+ * Needs three.js (r128), qrcode-generator, TensorFlow.js, MobileNet and COCO-SSD
+ * loaded before this file (see index.html).
  * Demo only: accounts are saved in this browser's localStorage.
  */
 
@@ -22,7 +23,8 @@ const ITEMS = [
     { n: 'Banana peel', k: 'bio', g: () => new THREE.TorusGeometry(.1, .045, 8, 14), col: 0xe8d23a },
     { n: 'Apple core', k: 'bio', g: () => new THREE.SphereGeometry(.1, 14, 10), col: 0xc9473a },
     { n: 'Chip wrapper', k: 'res', g: () => new THREE.BoxGeometry(.24, .03, .18), col: 0xd98a2b },
-    { n: 'Used battery', k: 'haz', g: () => new THREE.CylinderGeometry(.05, .05, .17, 12), col: 0x555a60 }
+    { n: 'Used battery', k: 'haz', g: () => new THREE.CylinderGeometry(.05, .05, .17, 12), col: 0x555a60 },
+    { n: 'Plastic cup', k: 'rec', g: () => new THREE.CylinderGeometry(.1, .07, .2, 16), col: 0xffffff }
 ];
 
 // Rewards students can redeem with points. Fields: n = name, cost = points, ic = icon, d = description
@@ -40,6 +42,7 @@ const LV = [0, 50, 150, 300, 500];
 // ===== 2. App state and browser storage =====
 let users = {}, cur = null, active = false, busy = false, reg = false;
 let sess = 0; // points earned in the current simulator session
+let queue = []; // items waiting to be dropped one after another
 
 try {
     users = JSON.parse(localStorage.getItem('sb_users') || '{}');
@@ -176,6 +179,7 @@ $('out').onclick = () => {
     cur = null;
     active = false;
     sess = 0;
+    queue = [];
     $('app').hidden = true;
     $('auth').hidden = false;
 };
@@ -186,7 +190,7 @@ $('scan').onclick = () => {
     active = true;
     sess = 0;
     render();
-    flash('Welcome, ' + users[cur].name.split(' ')[0] + '!', 'Show your item');
+    flash('Welcome, ' + users[cur].name.split(' ')[0] + '!', 'Show your items');
     openCam(); // the QR scan sends the student to the camera
 };
 
@@ -197,6 +201,7 @@ $('exitSim').onclick = () => {
     closeCam();
     active = false;
     sess = 0;
+    queue = [];
     drawScreen('Scan QR to login', 'Use the kiosk', 0);
     render();
 };
@@ -473,13 +478,13 @@ kiosk.add(kp);
 
 add(new THREE.BoxGeometry(1, 1.3, .08), dk, 0, 0, 0, kp);
 
-// ---- QR code ----
-// The kiosk QR opens this app. The "#scan" at the end tells the app to go straight
-// to the simulator and start the camera after the student logs in.
+// ---- Real QR code ----
+// The kiosk QR always opens the GitHub Pages site. The "#scan" at the end tells the app
+// to go straight to the simulator and start the camera after the student logs in.
 // Needs the qrcode-generator library (see index.html).
-const QR_LINK = 'https://giamon1.github.io/EcoTrack/';
+const QR_URL = 'https://giamon1.github.io/EcoTrack/';
 
-const qrUrl = () => QR_LINK + '#scan';
+const qrUrl = () => QR_URL + '#scan';
 
 // Draw a QR code for the text onto a canvas: black squares on white, with the quiet border scanners need
 function drawQR(canvas, text) {
@@ -873,6 +878,8 @@ function tick(dt) {
         anim = null;
         busy = false;
         render();
+        if (queue.length && active)
+            drop(queue.shift()); // next item in the batch
     }
 }
 
@@ -980,14 +987,14 @@ $('leadTabs').onclick = e => {
     renderLeaderboard();
 };
 
-// ===== 12. Camera scanner (AI identifies the item you hold up) =====
-// Two ways to recognise an item:
-//  1. Trained (accurate): record a few seconds of each of YOUR items, plus an empty frame.
-//     Every camera frame is turned into a MobileNet "fingerprint" and matched to the closest
-//     recorded sample (nearest neighbours). Samples are saved in this browser.
-//  2. Untrained (rough guess): MobileNet's general object names are matched to the demo items.
-// Only the square inside the green frame is looked at, so the background is ignored.
-// Item numbers match the ITEMS list: 0 bottle, 1 paper, 2 can, 3 banana, 4 apple, 5 chips, 6 battery.
+// ===== 12. Camera scanner: detects every item and counts them =====
+// COCO-SSD finds all objects in view; MobileNet is a fallback for single items.
+// Values are ITEMS indexes: 0 bottle, 1 paper, 2 can, 3 banana, 4 apple, 5 chips, 6 battery, 7 cup.
+const COCO = {
+    bottle: 0, book: 1, cup: 7, banana: 3, apple: 4, orange: 4, carrot: 4, broccoli: 4,
+    sandwich: 4, donut: 4, cake: 4, pizza: 4, 'hot dog': 4, 'cell phone': 6, remote: 6
+};
+
 const RULES = [
     [0, /bottle|jug|lotion|soap dispenser/],
     [1, /paper|envelope|notebook|menu|tissue|binder|book/],
@@ -995,143 +1002,20 @@ const RULES = [
     [3, /banana/],
     [4, /granny smith|apple|pomegranate/],
     [5, /packet|plastic bag|pretzel|wrapper/],
-    [6, /flashlight|torch|remote control|cassette|lighter|ipod|radio/]
+    [6, /flashlight|torch|remote control|cassette|lighter|ipod|radio/],
+    [7, /\bcup\b|mug|beer glass/]
 ];
 
 // Names that contain a keyword above but mean something else
 const SKIP = /ashcan|trash|garbage|opener|computer|laptop|bucket/;
 
-const NONE = -1, TRAIN_KEY = 'sb_train', TRAIN_VER = 2, MAX_PER = 40;
-
-// @@pure-start (plain functions, no camera or page needed; these are unit-tested)
-const dot = (a, b) => {
-    let s = 0;
-    for (let i = 0; i < a.length; i++)
-        s += a[i] * b[i];
-    return s;
-};
-
-// Scale a fingerprint to length 1, so a match score is just dot(a, b), from -1 to 1
-function unit(v) {
-    let n = 0;
-    for (let i = 0; i < v.length; i++)
-        n += v[i] * v[i];
-    n = Math.sqrt(n) || 1;
-    return v.map(x => x / n);
-}
-
-// Save a fingerprint compactly (one byte per number) so many samples fit in localStorage
-function pack(v) {
-    let m = 0;
-    for (const x of v)
-        m = Math.max(m, Math.abs(x));
-    const sc = m ? 127 / m : 0;
-    let s = '';
-    for (const x of v)
-        s += String.fromCharCode(Math.round(x * sc) & 255);
-    return btoa(s);
-}
-
-function unpack(str) {
-    const s = atob(str), v = new Float32Array(s.length);
-    for (let i = 0; i < s.length; i++)
-        v[i] = s.charCodeAt(i) << 24 >> 24;
-    return unit(v);
-}
-
-// Find the recorded samples closest to this fingerprint and let the nearest ones vote.
-// Returns the winning label, its share of the vote, and the best match score.
-function knnPredict(samples, v, k = 5) {
-    const near = [];
-    for (const s of samples)
-        if (s.v.length === v.length)
-            near.push({ l: s.l, d: dot(s.v, v) });
-    if (!near.length)
-        return null;
-    near.sort((a, b) => b.d - a.d);
-    const top = near.slice(0, k), votes = {};
-    let total = 0;
-    for (const n of top) {
-        const w = Math.max(n.d, 0) ** 4;
-        votes[n.l] = (votes[n.l] || 0) + w;
-        total += w;
-    }
-    let best = null;
-    for (const l in votes)
-        if (best === null || votes[l] > votes[best])
-            best = l;
-    return { l: +best, share: total ? votes[best] / total : 0, top: top[0].d };
-}
-
-// The square of the video that sits inside the green frame (the video is shown with object-fit: cover)
-function cropRect(vw, vh, W, H) {
-    const scale = Math.max(W / vw, H / vh);
-    const side = Math.min(.65 * H / scale, vw, vh);
-    return { sx: (vw - side) / 2, sy: (vh - side) / 2, side };
-}
-// @@pure-end
-
-let stream = null, model = null, camOn = false, found = null, hits = 0, lastIdx = -1;
-let looping = false, teaching = false, teachLabel = 0;
-
-function loadTrain() {
-    try {
-        const d = JSON.parse(localStorage.getItem(TRAIN_KEY) || 'null');
-        if (d && d.ver === TRAIN_VER)
-            return d.s.map(([l, p]) => ({ l, v: unpack(p) }));
-    }
-    catch (e) {
-    }
-    return [];
-}
-
-let samples = loadTrain();
-
-function saveTrain() {
-    try {
-        localStorage.setItem(TRAIN_KEY, JSON.stringify({ ver: TRAIN_VER, s: samples.map(s => [s.l, pack(s.v)]) }));
-        return true;
-    }
-    catch (e) {
-        return false;
-    }
-}
-
-function addSample(l, v) {
-    samples.push({ l, v });
-    // keep the newest MAX_PER samples of each item
-    const same = samples.filter(s => s.l === l);
-    if (same.length > MAX_PER)
-        samples.splice(samples.indexOf(same[0]), 1);
-}
-
-// Use the trained matcher once there are samples of at least two different things
-const trained = () => samples.length >= 6 && new Set(samples.map(s => s.l)).size >= 2;
-
-function trainInfo() {
-    const c = {};
-    samples.forEach(s => c[s.l] = (c[s.l] || 0) + 1);
-    const parts = ITEMS.map((it, i) => it.n + ' ' + (c[i] || 0)).concat('Nothing ' + (c[NONE] || 0));
-    $('teachInfo').textContent = samples.length
-        ? 'Saved samples: ' + parts.join(' · ') + '. About 10 to 20 of each works well.'
-        : 'Not trained yet. Until you record your items, the AI only guesses from general object names, which is not very accurate.';
-    $('teachClear').disabled = !samples.length || teaching;
-}
-
-$('teachPick').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}" type="button">${it.n}</button>`).join('') +
-    '<button data-i="-1" type="button">Nothing (empty frame)</button>';
-
-function markTeach() {
-    document.querySelectorAll('#teachPick button').forEach(b => b.classList.toggle('on', +b.dataset.i === teachLabel));
-}
-
-markTeach();
+let stream = null, model = null, det = null, camOn = false, found = {}, frames = [];
 
 $('camPick').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}" type="button">${it.n}</button>`).join('');
 
 const setCam = t => $('camMsg').textContent = t;
 
-// Untrained guess: pick the first general object name that matches one of the demo items
+// Pick the first guess that matches one of the demo items
 function match(preds) {
     for (const p of preds) {
         if (p.probability < .12)
@@ -1141,57 +1025,71 @@ function match(preds) {
             continue;
         for (const [i, re] of RULES)
             if (re.test(label))
-                return { i, label: 'AI saw: ' + p.className.split(',')[0] };
+                return { i, label: p.className.split(',')[0] };
     }
     return null;
 }
 
-// Copy the square inside the green frame to a small canvas (used for teaching and for scanning)
-const cropC = document.createElement('canvas');
-
-cropC.width = cropC.height = 224;
-
-function crop() {
-    const v = $('camVid');
-    if (!v.videoWidth)
-        return null;
-    const r = cropRect(v.videoWidth, v.videoHeight, v.clientWidth, v.clientHeight);
-    cropC.getContext('2d').drawImage(v, r.sx, r.sy, r.side, r.side, 0, 0, 224, 224);
-    return cropC;
+// Show the list of detected items with + / − quantity buttons
+function renderFound() {
+    const ids = Object.keys(found).filter(k => found[k] > 0);
+    $('camRes').hidden = !ids.length;
+    let n = 0, pts = 0;
+    $('camList').innerHTML = ids.map(k => {
+        const it = ITEMS[k], c = CATS[it.k];
+        n += found[k];
+        pts += found[k] * c.pts;
+        return `<div class="cr"><div><b>${it.n}</b><div class="mu">${c.n} · +${c.pts} pts each</div></div>` +
+            `<div class="qty"><button data-q="${k}" data-d="-1" type="button">−</button><b>${found[k]}</b><button data-q="${k}" data-d="1" type="button">+</button></div></div>`;
+    }).join('');
+    $('camTotal').textContent = ids.length ? n + (n === 1 ? ' item' : ' items') + ' · +' + pts + ' pts total' : '';
 }
 
-// The fingerprint of an image: MobileNet's feature vector, scaled to length 1
-async function embed(c) {
-    const t = tf.tidy(() => {
-        const e = model.infer(c, true);
-        return e.div(e.norm()).squeeze();
+$('camList').onclick = e => {
+    const b = e.target.closest('button[data-q]');
+    if (!b) return;
+    const k = b.dataset.q;
+    found[k] = Math.max(0, Math.min(20, (found[k] || 0) + +b.dataset.d));
+    if (!found[k]) delete found[k];
+    renderFound();
+};
+
+// Draw a colored box and name over every detected object
+function drawBoxes(dets) {
+    const o = $('camOv'), v = $('camVid');
+    o.width = v.videoWidth;
+    o.height = v.videoHeight;
+    const g = o.getContext('2d');
+    g.clearRect(0, 0, o.width, o.height);
+    g.lineWidth = Math.max(3, o.width / 200);
+    g.font = '600 ' + Math.max(16, o.width / 32) + 'px Segoe UI,sans-serif';
+    dets.forEach(d => {
+        const [x, y, w, h] = d.bbox, it = ITEMS[COCO[d.class]], c = CATS[it.k];
+        g.strokeStyle = c.c;
+        g.fillStyle = c.c;
+        g.strokeRect(x, y, w, h);
+        g.fillText(it.n, x + 4, Math.max(18, y - 6));
     });
-    const v = await t.data();
-    t.dispose();
-    return v;
 }
 
-function showResult(m) {
-    found = m;
-    $('camRes').hidden = !m;
-    if (!m)
-        return;
-    const it = ITEMS[m.i], c = CATS[it.k];
-    $('camName').textContent = it.n;
-    $('camCat').textContent = c.n + ' · +' + c.pts + ' pts' + (m.label ? ' · ' + m.label : '');
-    setCam('Item identified.');
+// Median count over the last frames, so one bad frame doesn't change the result
+function stable() {
+    const out = {}, keys = new Set(frames.flatMap(f => Object.keys(f)));
+    keys.forEach(k => {
+        const v = frames.map(f => f[k] || 0).sort((a, b) => a - b);
+        const med = v[Math.floor(v.length / 2)];
+        if (med >= 1) out[k] = med;
+    });
+    return out;
 }
 
 async function openCam() {
-    if (camOn)
-        return;
+    if (camOn) return;
     camOn = true;
-    hits = 0;
-    lastIdx = -1;
+    frames = [];
+    found = {};
     $('cam').hidden = false;
-    $('teachBox').open = !samples.length;
-    trainInfo();
-    showResult(null);
+    renderFound();
     setCam('Starting camera...');
     try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
@@ -1201,77 +1099,59 @@ async function openCam() {
             stopStream();
             return;
         }
-        $('camVid').srcObject = stream;
-        await $('camVid').play();
+        const v = $('camVid');
+        v.srcObject = stream;
+        await v.play();
+        if (v.videoWidth)
+            v.parentNode.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
     }
     catch (err) {
-        setCam('Camera not available. Allow camera access (it needs https or localhost), or pick the item below.');
+        setCam('Camera not available. Allow camera access (it needs https), or add the items below.');
         return;
     }
-    if (!model) {
-        setCam('Loading AI model...');
+    if (!det || !model) {
+        setCam('Loading AI models...');
         try {
-            model = await mobilenet.load({ version: 2, alpha: 1.0 });
+            [det, model] = await Promise.all([
+                det || cocoSsd.load({ base: 'mobilenet_v2' }),
+                model || mobilenet.load()
+            ]);
         }
         catch (err) {
-            setCam('Could not load the AI model. Check your internet connection, or pick the item below.');
+            setCam('Could not load the AI models. Check your internet connection, or add the items below.');
             return;
         }
     }
-    if (!camOn)
-        return;
-    setCam(trained() ? 'Hold one item inside the green frame.' : 'Hold one item inside the green frame. For better accuracy, teach the AI your items below.');
-    startLoop();
-}
-
-// What the camera sees right now: either an item number, or a message to show
-async function look(c) {
-    if (trained()) {
-        const r = knnPredict(samples, await embed(c));
-        if (r && r.l === NONE)
-            return { msg: 'Hold one item inside the green frame.' };
-        if (r && r.share >= .6 && r.top >= .7)
-            return { i: r.l, label: 'matched your recordings (' + Math.round(r.share * 100) + '% sure)' };
-        return { msg: 'Not sure yet. Hold the item steady inside the frame, or record it below.' };
-    }
-    const preds = await model.classify(c, 5), m = match(preds);
-    return m || { msg: 'Not sure yet. I see: ' + preds[0].className.split(',')[0] + '. Hold the item closer, or teach the AI below.' };
-}
-
-function startLoop() {
-    if (!looping) {
-        looping = true;
-        scanLoop();
-    }
+    if (!camOn) return;
+    setCam('Place all items in view, spaced apart so each one is visible.');
+    scanLoop();
 }
 
 async function scanLoop() {
-    if (!camOn || found) {
-        looping = false;
-        return;
-    }
-    if (teaching) {
-        setTimeout(scanLoop, 300);
-        return;
-    }
+    if (!camOn || Object.keys(found).length) return;
     try {
-        const c = crop();
-        if (c) {
-            const r = await look(c);
-            if (r.i !== undefined) {
-                hits = r.i === lastIdx ? hits + 1 : 1;
-                lastIdx = r.i;
-                setCam('Looking at: ' + ITEMS[r.i].n + '...');
-                if (hits >= (trained() ? 3 : 2)) {
-                    showResult(r);
-                    looping = false;
-                    return;
-                }
-            }
-            else {
-                hits = 0;
-                lastIdx = -1;
-                setCam(r.msg);
+        const v = $('camVid');
+        const dets = (await det.detect(v, 20)).filter(d => d.score >= .45 && COCO[d.class] !== undefined);
+        drawBoxes(dets);
+        const counts = {};
+        dets.forEach(d => {
+            const i = COCO[d.class];
+            counts[i] = (counts[i] || 0) + 1;
+        });
+        // nothing found by COCO-SSD: ask MobileNet about a single item
+        if (!dets.length) {
+            const m = match(await model.classify(v, 5));
+            if (m) counts[m.i] = 1;
+        }
+        frames.push(counts);
+        if (frames.length > 6) frames.shift();
+        if (frames.length >= 4) {
+            const out = stable();
+            if (Object.keys(out).length) {
+                found = out;
+                renderFound();
+                setCam('Check the quantities. Use + / − to fix any mistakes.');
+                return;
             }
         }
     }
@@ -1289,7 +1169,7 @@ function stopStream() {
 
 function closeCam() {
     camOn = false;
-    found = null;
+    found = {};
     stopStream();
     $('cam').hidden = true;
 }
@@ -1299,96 +1179,40 @@ $('camClose').onclick = closeCam;
 $('camBtn').onclick = openCam;
 
 $('camRetry').onclick = () => {
-    hits = 0;
-    lastIdx = -1;
-    showResult(null);
-    setCam('Hold one item inside the green frame.');
-    if (model)
-        startLoop();
+    found = {};
+    frames = [];
+    renderFound();
+    const o = $('camOv');
+    o.getContext('2d').clearRect(0, 0, o.width, o.height);
+    setCam('Place all items in view, spaced apart so each one is visible.');
+    if (det && model) scanLoop();
 };
 
-// Picking the right item yourself also teaches the AI: the frame on screen is saved as a sample of it
-$('camPick').onclick = async e => {
+$('camPick').onclick = e => {
     const b = e.target.closest('button');
-    if (!b)
-        return;
-    const i = +b.dataset.i;
-    showResult({ i, label: '' });
-    if (model && camOn && !teaching && $('camVid').videoWidth) {
-        const c = crop();
-        if (c) {
-            addSample(i, await embed(c));
-            saveTrain();
-            trainInfo();
-        }
-    }
+    if (!b) return;
+    found[b.dataset.i] = Math.min(20, (found[b.dataset.i] || 0) + 1);
+    renderFound();
+    setCam('Check the quantities. Use + / − to fix any mistakes.');
 };
 
+// Drop everything found, one item after another
 $('camDrop').onclick = () => {
-    const m = found;
-    if (!m || !active || busy)
-        return;
+    if (!active || busy) return;
+    const list = Object.keys(found).flatMap(k => Array(found[k]).fill(ITEMS[k]));
+    if (!list.length) return;
     closeCam();
-    drop(ITEMS[m.i]);
-};
-
-// ---- Teach mode: record about 3 seconds of one item (10 snapshots) ----
-$('teachPick').onclick = e => {
-    const b = e.target.closest('button');
-    if (!b)
-        return;
-    teachLabel = +b.dataset.i;
-    markTeach();
-};
-
-$('teachRec').onclick = async () => {
-    if (teaching || !camOn)
-        return;
-    if (!model || !$('camVid').videoWidth) {
-        setCam('Wait for the camera and the AI model to finish loading first.');
-        return;
-    }
-    teaching = true;
-    showResult(null);
-    $('teachRec').disabled = true;
-    $('teachClear').disabled = true;
-    const label = teachLabel, name = label === NONE ? 'an empty frame' : ITEMS[label].n;
-    for (let n = 1; n <= 10 && camOn; n++) {
-        setCam('Recording ' + name + ' (' + n + '/10). Turn it slowly.');
-        await new Promise(res => setTimeout(res, 300));
-        const c = crop();
-        if (c)
-            addSample(label, await embed(c));
-    }
-    const ok = saveTrain();
-    teaching = false;
-    $('teachRec').disabled = false;
-    trainInfo();
-    hits = 0;
-    lastIdx = -1;
-    setCam(ok ? 'Saved ' + name + '. Record the other items too, then hold one in the frame.' : 'Could not save to this browser (storage is full or blocked), so the training will be lost when you close the page.');
-    if (camOn)
-        startLoop();
-};
-
-$('teachClear').onclick = () => {
-    if (teaching || !confirm('Delete all recordings of your items on this device?'))
-        return;
-    samples = [];
-    saveTrain();
-    trainInfo();
-    setCam('Training cleared.');
+    queue = list;
+    drop(queue.shift());
 };
 
 // ===== 13. Large QR window (for scanning with a phone) =====
-// Redraw the QR on the 3D kiosk and in the window, and show warnings when a phone
-// could not open the link.
 function refreshQR() {
     const url = qrUrl();
     drawQR(qc, url);
     qTex.needsUpdate = true;
     drawQR($('qrBig'), url);
-    $('qrLink').textContent = QR_LINK;
+    $('qrLink').textContent = url;
 }
 
 $('qrBtn').onclick = () => {

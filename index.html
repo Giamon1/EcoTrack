@@ -170,36 +170,24 @@
     <div class="cam" hidden="" id="cam" role="dialog" aria-modal="true" aria-label="Item scanner">
       <div class="camBox">
         <div class="camHead">
-          <h2>Show your item</h2>
+          <h2>Show your items</h2>
           <button id="camClose" type="button">Close</button>
         </div>
         <div class="camView">
           <video id="camVid" muted="" playsinline=""></video>
-          <div class="camFrame"></div>
+          <canvas id="camOv" class="camOv"></canvas>
         </div>
         <div class="mu" id="camMsg"></div>
         <div class="camRes" hidden="" id="camRes">
-          <div>
-            <b id="camName"></b>
-            <div class="mu" id="camCat"></div>
-          </div>
+          <div id="camList" style="width:100%"></div>
+          <div class="mu" id="camTotal" style="width:100%"></div>
           <div class="bbtns">
             <button id="camRetry" type="button">Scan again</button>
-            <button class="p" id="camDrop" type="button">Drop in bin</button>
+            <button class="p" id="camDrop" type="button">Drop all in bin</button>
           </div>
         </div>
-        <div class="mu">Not right? Pick the right item (this also teaches the AI):</div>
+        <div class="mu">Not right? Add items yourself:</div>
         <div class="items" id="camPick"></div>
-        <details id="teachBox">
-          <summary>Improve accuracy: teach the AI your items</summary>
-          <div class="mu" style="margin:10px 0">Pick an item, hold it inside the green frame, then press Record and turn it around slowly. Do this for each item, and once for "Nothing" with an empty frame.</div>
-          <div class="items" id="teachPick"></div>
-          <div class="bbtns" style="margin:12px 0">
-            <button class="p" id="teachRec" type="button">Record 3 seconds</button>
-            <button id="teachClear" type="button">Clear recordings</button>
-          </div>
-          <div class="mu" id="teachInfo"></div>
-        </details>
       </div>
     </div>
     <div class="cam" hidden="" id="qrModal" role="dialog" aria-modal="true" aria-label="QR code">
@@ -210,13 +198,14 @@
         </div>
         <canvas aria-label="QR code that opens EcoTrack" class="qrBig" height="512" id="qrBig" width="512"></canvas>
         <div class="mu" id="qrLink" style="word-break:break-all"></div>
-        <div class="mu">Scan with your phone camera, log in, and the item scanner opens automatically.</div>
+        <div class="mu">Phone cameras only work on https sites, so the item scanner runs on your GitHub Pages link.</div>
       </div>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
