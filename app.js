@@ -473,24 +473,13 @@ kiosk.add(kp);
 
 add(new THREE.BoxGeometry(1, 1.3, .08), dk, 0, 0, 0, kp);
 
-// ---- Real QR code ----
+// ---- QR code ----
 // The kiosk QR opens this app. The "#scan" at the end tells the app to go straight
 // to the simulator and start the camera after the student logs in.
 // Needs the qrcode-generator library (see index.html).
-const QR_KEY = 'sb_qr_url';
+const QR_LINK = 'https://giamon1.github.io/EcoTrack/';
 
-// The address the QR opens: a link saved by the user, or the page you are on now
-function qrBase() {
-    let saved = '';
-    try {
-        saved = localStorage.getItem(QR_KEY) || '';
-    }
-    catch (e) {
-    }
-    return saved || location.href.split('#')[0].split('?')[0];
-}
-
-const qrUrl = () => qrBase() + '#scan';
+const qrUrl = () => QR_LINK + '#scan';
 
 // Draw a QR code for the text onto a canvas: black squares on white, with the quiet border scanners need
 function drawQR(canvas, text) {
@@ -992,8 +981,12 @@ $('leadTabs').onclick = e => {
 };
 
 // ===== 12. Camera scanner (AI identifies the item you hold up) =====
-// Uses TensorFlow.js + MobileNet in the browser. MobileNet knows general object
-// names (e.g. "water bottle"), so each name is mapped to one of the demo items.
+// Two ways to recognise an item:
+//  1. Trained (accurate): record a few seconds of each of YOUR items, plus an empty frame.
+//     Every camera frame is turned into a MobileNet "fingerprint" and matched to the closest
+//     recorded sample (nearest neighbours). Samples are saved in this browser.
+//  2. Untrained (rough guess): MobileNet's general object names are matched to the demo items.
+// Only the square inside the green frame is looked at, so the background is ignored.
 // Item numbers match the ITEMS list: 0 bottle, 1 paper, 2 can, 3 banana, 4 apple, 5 chips, 6 battery.
 const RULES = [
     [0, /bottle|jug|lotion|soap dispenser/],
@@ -1008,13 +1001,137 @@ const RULES = [
 // Names that contain a keyword above but mean something else
 const SKIP = /ashcan|trash|garbage|opener|computer|laptop|bucket/;
 
+const NONE = -1, TRAIN_KEY = 'sb_train', TRAIN_VER = 2, MAX_PER = 40;
+
+// @@pure-start (plain functions, no camera or page needed; these are unit-tested)
+const dot = (a, b) => {
+    let s = 0;
+    for (let i = 0; i < a.length; i++)
+        s += a[i] * b[i];
+    return s;
+};
+
+// Scale a fingerprint to length 1, so a match score is just dot(a, b), from -1 to 1
+function unit(v) {
+    let n = 0;
+    for (let i = 0; i < v.length; i++)
+        n += v[i] * v[i];
+    n = Math.sqrt(n) || 1;
+    return v.map(x => x / n);
+}
+
+// Save a fingerprint compactly (one byte per number) so many samples fit in localStorage
+function pack(v) {
+    let m = 0;
+    for (const x of v)
+        m = Math.max(m, Math.abs(x));
+    const sc = m ? 127 / m : 0;
+    let s = '';
+    for (const x of v)
+        s += String.fromCharCode(Math.round(x * sc) & 255);
+    return btoa(s);
+}
+
+function unpack(str) {
+    const s = atob(str), v = new Float32Array(s.length);
+    for (let i = 0; i < s.length; i++)
+        v[i] = s.charCodeAt(i) << 24 >> 24;
+    return unit(v);
+}
+
+// Find the recorded samples closest to this fingerprint and let the nearest ones vote.
+// Returns the winning label, its share of the vote, and the best match score.
+function knnPredict(samples, v, k = 5) {
+    const near = [];
+    for (const s of samples)
+        if (s.v.length === v.length)
+            near.push({ l: s.l, d: dot(s.v, v) });
+    if (!near.length)
+        return null;
+    near.sort((a, b) => b.d - a.d);
+    const top = near.slice(0, k), votes = {};
+    let total = 0;
+    for (const n of top) {
+        const w = Math.max(n.d, 0) ** 4;
+        votes[n.l] = (votes[n.l] || 0) + w;
+        total += w;
+    }
+    let best = null;
+    for (const l in votes)
+        if (best === null || votes[l] > votes[best])
+            best = l;
+    return { l: +best, share: total ? votes[best] / total : 0, top: top[0].d };
+}
+
+// The square of the video that sits inside the green frame (the video is shown with object-fit: cover)
+function cropRect(vw, vh, W, H) {
+    const scale = Math.max(W / vw, H / vh);
+    const side = Math.min(.65 * H / scale, vw, vh);
+    return { sx: (vw - side) / 2, sy: (vh - side) / 2, side };
+}
+// @@pure-end
+
 let stream = null, model = null, camOn = false, found = null, hits = 0, lastIdx = -1;
+let looping = false, teaching = false, teachLabel = 0;
+
+function loadTrain() {
+    try {
+        const d = JSON.parse(localStorage.getItem(TRAIN_KEY) || 'null');
+        if (d && d.ver === TRAIN_VER)
+            return d.s.map(([l, p]) => ({ l, v: unpack(p) }));
+    }
+    catch (e) {
+    }
+    return [];
+}
+
+let samples = loadTrain();
+
+function saveTrain() {
+    try {
+        localStorage.setItem(TRAIN_KEY, JSON.stringify({ ver: TRAIN_VER, s: samples.map(s => [s.l, pack(s.v)]) }));
+        return true;
+    }
+    catch (e) {
+        return false;
+    }
+}
+
+function addSample(l, v) {
+    samples.push({ l, v });
+    // keep the newest MAX_PER samples of each item
+    const same = samples.filter(s => s.l === l);
+    if (same.length > MAX_PER)
+        samples.splice(samples.indexOf(same[0]), 1);
+}
+
+// Use the trained matcher once there are samples of at least two different things
+const trained = () => samples.length >= 6 && new Set(samples.map(s => s.l)).size >= 2;
+
+function trainInfo() {
+    const c = {};
+    samples.forEach(s => c[s.l] = (c[s.l] || 0) + 1);
+    const parts = ITEMS.map((it, i) => it.n + ' ' + (c[i] || 0)).concat('Nothing ' + (c[NONE] || 0));
+    $('teachInfo').textContent = samples.length
+        ? 'Saved samples: ' + parts.join(' · ') + '. About 10 to 20 of each works well.'
+        : 'Not trained yet. Until you record your items, the AI only guesses from general object names, which is not very accurate.';
+    $('teachClear').disabled = !samples.length || teaching;
+}
+
+$('teachPick').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}" type="button">${it.n}</button>`).join('') +
+    '<button data-i="-1" type="button">Nothing (empty frame)</button>';
+
+function markTeach() {
+    document.querySelectorAll('#teachPick button').forEach(b => b.classList.toggle('on', +b.dataset.i === teachLabel));
+}
+
+markTeach();
 
 $('camPick').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}" type="button">${it.n}</button>`).join('');
 
 const setCam = t => $('camMsg').textContent = t;
 
-// Pick the first guess that matches one of the demo items
+// Untrained guess: pick the first general object name that matches one of the demo items
 function match(preds) {
     for (const p of preds) {
         if (p.probability < .12)
@@ -1024,9 +1141,34 @@ function match(preds) {
             continue;
         for (const [i, re] of RULES)
             if (re.test(label))
-                return { i, label: p.className.split(',')[0] };
+                return { i, label: 'AI saw: ' + p.className.split(',')[0] };
     }
     return null;
+}
+
+// Copy the square inside the green frame to a small canvas (used for teaching and for scanning)
+const cropC = document.createElement('canvas');
+
+cropC.width = cropC.height = 224;
+
+function crop() {
+    const v = $('camVid');
+    if (!v.videoWidth)
+        return null;
+    const r = cropRect(v.videoWidth, v.videoHeight, v.clientWidth, v.clientHeight);
+    cropC.getContext('2d').drawImage(v, r.sx, r.sy, r.side, r.side, 0, 0, 224, 224);
+    return cropC;
+}
+
+// The fingerprint of an image: MobileNet's feature vector, scaled to length 1
+async function embed(c) {
+    const t = tf.tidy(() => {
+        const e = model.infer(c, true);
+        return e.div(e.norm()).squeeze();
+    });
+    const v = await t.data();
+    t.dispose();
+    return v;
 }
 
 function showResult(m) {
@@ -1036,7 +1178,7 @@ function showResult(m) {
         return;
     const it = ITEMS[m.i], c = CATS[it.k];
     $('camName').textContent = it.n;
-    $('camCat').textContent = c.n + ' · +' + c.pts + ' pts' + (m.label ? ' · AI saw: ' + m.label : '');
+    $('camCat').textContent = c.n + ' · +' + c.pts + ' pts' + (m.label ? ' · ' + m.label : '');
     setCam('Item identified.');
 }
 
@@ -1047,6 +1189,8 @@ async function openCam() {
     hits = 0;
     lastIdx = -1;
     $('cam').hidden = false;
+    $('teachBox').open = !samples.length;
+    trainInfo();
     showResult(null);
     setCam('Starting camera...');
     try {
@@ -1067,7 +1211,7 @@ async function openCam() {
     if (!model) {
         setCam('Loading AI model...');
         try {
-            model = await mobilenet.load();
+            model = await mobilenet.load({ version: 2, alpha: 1.0 });
         }
         catch (err) {
             setCam('Could not load the AI model. Check your internet connection, or pick the item below.');
@@ -1076,34 +1220,64 @@ async function openCam() {
     }
     if (!camOn)
         return;
-    setCam('Hold one item inside the frame.');
-    scanLoop();
+    setCam(trained() ? 'Hold one item inside the green frame.' : 'Hold one item inside the green frame. For better accuracy, teach the AI your items below.');
+    startLoop();
+}
+
+// What the camera sees right now: either an item number, or a message to show
+async function look(c) {
+    if (trained()) {
+        const r = knnPredict(samples, await embed(c));
+        if (r && r.l === NONE)
+            return { msg: 'Hold one item inside the green frame.' };
+        if (r && r.share >= .6 && r.top >= .7)
+            return { i: r.l, label: 'matched your recordings (' + Math.round(r.share * 100) + '% sure)' };
+        return { msg: 'Not sure yet. Hold the item steady inside the frame, or record it below.' };
+    }
+    const preds = await model.classify(c, 5), m = match(preds);
+    return m || { msg: 'Not sure yet. I see: ' + preds[0].className.split(',')[0] + '. Hold the item closer, or teach the AI below.' };
+}
+
+function startLoop() {
+    if (!looping) {
+        looping = true;
+        scanLoop();
+    }
 }
 
 async function scanLoop() {
-    if (!camOn || found)
+    if (!camOn || found) {
+        looping = false;
         return;
+    }
+    if (teaching) {
+        setTimeout(scanLoop, 300);
+        return;
+    }
     try {
-        const preds = await model.classify($('camVid'), 5);
-        const m = match(preds);
-        if (m) {
-            hits = m.i === lastIdx ? hits + 1 : 1;
-            lastIdx = m.i;
-            setCam('Looking at: ' + m.label + '...');
-            if (hits >= 2) {
-                showResult(m);
-                return;
+        const c = crop();
+        if (c) {
+            const r = await look(c);
+            if (r.i !== undefined) {
+                hits = r.i === lastIdx ? hits + 1 : 1;
+                lastIdx = r.i;
+                setCam('Looking at: ' + ITEMS[r.i].n + '...');
+                if (hits >= (trained() ? 3 : 2)) {
+                    showResult(r);
+                    looping = false;
+                    return;
+                }
             }
-        }
-        else {
-            hits = 0;
-            lastIdx = -1;
-            setCam('Not sure yet. I see: ' + preds[0].className.split(',')[0] + '. Hold the item closer.');
+            else {
+                hits = 0;
+                lastIdx = -1;
+                setCam(r.msg);
+            }
         }
     }
     catch (err) {
     }
-    setTimeout(scanLoop, 500);
+    setTimeout(scanLoop, 400);
 }
 
 function stopStream() {
@@ -1128,15 +1302,26 @@ $('camRetry').onclick = () => {
     hits = 0;
     lastIdx = -1;
     showResult(null);
-    setCam('Hold one item inside the frame.');
+    setCam('Hold one item inside the green frame.');
     if (model)
-        scanLoop();
+        startLoop();
 };
 
-$('camPick').onclick = e => {
+// Picking the right item yourself also teaches the AI: the frame on screen is saved as a sample of it
+$('camPick').onclick = async e => {
     const b = e.target.closest('button');
-    if (b)
-        showResult({ i: +b.dataset.i, label: '' });
+    if (!b)
+        return;
+    const i = +b.dataset.i;
+    showResult({ i, label: '' });
+    if (model && camOn && !teaching && $('camVid').videoWidth) {
+        const c = crop();
+        if (c) {
+            addSample(i, await embed(c));
+            saveTrain();
+            trainInfo();
+        }
+    }
 };
 
 $('camDrop').onclick = () => {
@@ -1147,6 +1332,54 @@ $('camDrop').onclick = () => {
     drop(ITEMS[m.i]);
 };
 
+// ---- Teach mode: record about 3 seconds of one item (10 snapshots) ----
+$('teachPick').onclick = e => {
+    const b = e.target.closest('button');
+    if (!b)
+        return;
+    teachLabel = +b.dataset.i;
+    markTeach();
+};
+
+$('teachRec').onclick = async () => {
+    if (teaching || !camOn)
+        return;
+    if (!model || !$('camVid').videoWidth) {
+        setCam('Wait for the camera and the AI model to finish loading first.');
+        return;
+    }
+    teaching = true;
+    showResult(null);
+    $('teachRec').disabled = true;
+    $('teachClear').disabled = true;
+    const label = teachLabel, name = label === NONE ? 'an empty frame' : ITEMS[label].n;
+    for (let n = 1; n <= 10 && camOn; n++) {
+        setCam('Recording ' + name + ' (' + n + '/10). Turn it slowly.');
+        await new Promise(res => setTimeout(res, 300));
+        const c = crop();
+        if (c)
+            addSample(label, await embed(c));
+    }
+    const ok = saveTrain();
+    teaching = false;
+    $('teachRec').disabled = false;
+    trainInfo();
+    hits = 0;
+    lastIdx = -1;
+    setCam(ok ? 'Saved ' + name + '. Record the other items too, then hold one in the frame.' : 'Could not save to this browser (storage is full or blocked), so the training will be lost when you close the page.');
+    if (camOn)
+        startLoop();
+};
+
+$('teachClear').onclick = () => {
+    if (teaching || !confirm('Delete all recordings of your items on this device?'))
+        return;
+    samples = [];
+    saveTrain();
+    trainInfo();
+    setCam('Training cleared.');
+};
+
 // ===== 13. Large QR window (for scanning with a phone) =====
 // Redraw the QR on the 3D kiosk and in the window, and show warnings when a phone
 // could not open the link.
@@ -1155,21 +1388,7 @@ function refreshQR() {
     drawQR(qc, url);
     qTex.needsUpdate = true;
     drawQR($('qrBig'), url);
-    $('qrLink').textContent = url;
-    const host = location.hostname;
-    let saved = '';
-    try {
-        saved = localStorage.getItem(QR_KEY) || '';
-    }
-    catch (e) {
-    }
-    let warn = '';
-    if (!saved && location.protocol === 'file:')
-        warn = 'This page is opened as a file, so a phone cannot open this link. Host the app, or enter its link below.';
-    else if (!saved && (host === 'localhost' || host === '127.0.0.1'))
-        warn = 'localhost only works on this computer. Enter your computer\'s network address or a hosted https link below.';
-    $('qrWarn').textContent = warn;
-    $('qrInput').value = saved;
+    $('qrLink').textContent = QR_LINK;
 }
 
 $('qrBtn').onclick = () => {
@@ -1178,26 +1397,3 @@ $('qrBtn').onclick = () => {
 };
 
 $('qrClose').onclick = () => $('qrModal').hidden = true;
-
-$('qrSave').onclick = () => {
-    const v = $('qrInput').value.trim();
-    if (!/^https?:\/\/\S+$/i.test(v)) {
-        $('qrWarn').textContent = 'Enter a full link that starts with http:// or https://';
-        return;
-    }
-    try {
-        localStorage.setItem(QR_KEY, v.split('#')[0]);
-    }
-    catch (e) {
-    }
-    refreshQR();
-};
-
-$('qrReset').onclick = () => {
-    try {
-        localStorage.removeItem(QR_KEY);
-    }
-    catch (e) {
-    }
-    refreshQR();
-};
