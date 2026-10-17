@@ -10,10 +10,10 @@ const $ = id => document.getElementById(id);
 // ===== 1. Trash categories and demo items
 // Item fields: n = name, k = category key, g = geometry, col = color =====
 const CATS = {
-    rec: { n: 'Recyclable', c: '#39a0ff', i: 0, pts: 3, co2: .08 },
-    bio: { n: 'Biodegradable', c: '#39ff6a', i: 1, pts: 1, co2: .03 },
-    res: { n: 'Residual', c: '#c4ccc7', i: 2, pts: 1, co2: 0 },
-    haz: { n: 'Hazardous', c: '#ff5a4a', i: 3, pts: 6, co2: .12 }
+    rec: { n: 'Recyclable', c: '#39a0ff', i: 0, pts: 1, co2: .08 },
+    bio: { n: 'Biodegradable', c: '#39ff6a', i: 1, pts: 0.5, co2: .03 },
+    res: { n: 'Residual', c: '#c4ccc7', i: 2, pts: 0.5, co2: 0 },
+    haz: { n: 'Hazardous', c: '#ff5a4a', i: 3, pts: 2, co2: .12 }
 };
 
 const ITEMS = [
@@ -29,12 +29,12 @@ const ITEMS = [
 
 // Rewards students can redeem with points. Fields: n = name, cost = points, ic = icon, d = description
 const REWARDS = [
-    { n: 'Pencil', cost: 30, ic: '✏️', d: 'A sharpened pencil made from recycled paper.' },
-    { n: 'Eco sticker pack', cost: 40, ic: '🌿', d: 'Waterproof stickers for your bottle or laptop.' },
-    { n: 'Notebook', cost: 80, ic: '📓', d: 'Recycled-paper notebook, 80 leaves.' },
-    { n: 'Reusable straw set', cost: 120, ic: '🥤', d: 'Stainless steel straws with a cleaning brush.' },
-    { n: 'Canvas tote bag', cost: 200, ic: '👜', d: 'Reusable tote with the EcoTrack logo.' },
-    { n: 'Water bottle', cost: 350, ic: '🍶', d: 'Insulated reusable bottle.' }
+    { n: 'Pencil', cost: 40, ic: '✏️', d: 'A sharpened pencil made from recycled paper.' },
+    { n: 'Eco sticker pack', cost: 50, ic: '🌿', d: 'Waterproof stickers for your bottle or laptop.' },
+    { n: 'Notebook', cost: 100, ic: '📓', d: 'Recycled-paper notebook, 80 leaves.' },
+    { n: 'Reusable straw set', cost: 140, ic: '🥤', d: 'Stainless steel straws with a cleaning brush.' },
+    { n: 'Canvas tote bag', cost: 250, ic: '👜', d: 'Reusable tote with the EcoTrack logo.' },
+    { n: 'Water bottle', cost: 380, ic: '🍶', d: 'Insulated reusable bottle.' }
 ];
 
 const LV = [0, 50, 150, 300, 500];
