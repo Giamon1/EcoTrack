@@ -188,8 +188,18 @@
             <button class="p" id="camDrop" type="button">Drop in bin</button>
           </div>
         </div>
-        <div class="mu">Not right? Pick the item yourself:</div>
+        <div class="mu">Not right? Pick the right item (this also teaches the AI):</div>
         <div class="items" id="camPick"></div>
+        <details id="teachBox">
+          <summary>Improve accuracy: teach the AI your items</summary>
+          <div class="mu" style="margin:10px 0">Pick an item, hold it inside the green frame, then press Record and turn it around slowly. Do this for each item, and once for "Nothing" with an empty frame.</div>
+          <div class="items" id="teachPick"></div>
+          <div class="bbtns" style="margin:12px 0">
+            <button class="p" id="teachRec" type="button">Record 3 seconds</button>
+            <button id="teachClear" type="button">Clear recordings</button>
+          </div>
+          <div class="mu" id="teachInfo"></div>
+        </details>
       </div>
     </div>
     <div class="cam" hidden="" id="qrModal" role="dialog" aria-modal="true" aria-label="QR code">
@@ -200,13 +210,7 @@
         </div>
         <canvas aria-label="QR code that opens EcoTrack" class="qrBig" height="512" id="qrBig" width="512"></canvas>
         <div class="mu" id="qrLink" style="word-break:break-all"></div>
-        <div class="err" id="qrWarn" role="status"></div>
-        <label for="qrInput">Link the QR opens</label>
-        <input id="qrInput" placeholder="https://your-site.example/ or http://192.168.1.5:5500/"/>
-        <div class="bbtns">
-          <button class="p" id="qrSave" type="button">Use this link</button>
-          <button id="qrReset" type="button">Reset</button>
-        </div>
+        <div class="mu">Scan with your phone camera, log in, and the item scanner opens automatically.</div>
       </div>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
