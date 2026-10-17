@@ -864,7 +864,11 @@ canvas#c {
 
 .camFrame {
   position: absolute;
-  inset: 18%;
+  top: 17.5%;
+  left: 50%;
+  height: 65%;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
   border: 3px solid #39ff6a;
   border-radius: 18px;
   box-shadow: 0 0 0 999px rgba(0,0,0,.25);
@@ -880,6 +884,19 @@ canvas#c {
   background: var(--pl);
   border-radius: 14px;
   padding: 12px 14px;
+}
+
+.camBox summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--g2);
+}
+
+.items button.on,
+.items button.on:not(:disabled):hover {
+  background: var(--g);
+  color: #fff;
+  border-color: var(--g);
 }
 
 .qrBig {
