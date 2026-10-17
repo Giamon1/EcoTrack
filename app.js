@@ -159,6 +159,16 @@ function enter(sid) {
         drawScreen('Scan QR to login', 'Use the kiosk', 0);
     }, 0);
     render();
+    // Opened by scanning the kiosk QR: go to the simulator and start the camera
+    if (location.hash === '#scan') {
+        try {
+            history.replaceState(null, '', location.pathname + location.search);
+        }
+        catch (e) {
+        }
+        show('sim');
+        setTimeout(() => $('scan').click(), 400);
+    }
 }
 
 $('out').onclick = () => {
@@ -463,45 +473,70 @@ kiosk.add(kp);
 
 add(new THREE.BoxGeometry(1, 1.3, .08), dk, 0, 0, 0, kp);
 
+// ---- Real QR code ----
+// The kiosk QR opens this app. The "#scan" at the end tells the app to go straight
+// to the simulator and start the camera after the student logs in.
+// Needs the qrcode-generator library (see index.html).
+const QR_KEY = 'sb_qr_url';
+
+// The address the QR opens: a link saved by the user, or the page you are on now
+function qrBase() {
+    let saved = '';
+    try {
+        saved = localStorage.getItem(QR_KEY) || '';
+    }
+    catch (e) {
+    }
+    return saved || location.href.split('#')[0].split('?')[0];
+}
+
+const qrUrl = () => qrBase() + '#scan';
+
+// Draw a QR code for the text onto a canvas: black squares on white, with the quiet border scanners need
+function drawQR(canvas, text) {
+    const g = canvas.getContext('2d'), size = canvas.width;
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, size, size);
+    try {
+        const q = qrcode(0, 'M');
+        q.addData(text);
+        q.make();
+        const count = q.getModuleCount(), quiet = 4;
+        const cell = Math.floor(size / (count + quiet * 2));
+        const off = Math.floor((size - cell * count) / 2);
+        g.fillStyle = '#000';
+        for (let y = 0; y < count; y++)
+            for (let x = 0; x < count; x++)
+                if (q.isDark(y, x))
+                    g.fillRect(off + x * cell, off + y * cell, cell, cell);
+        return true;
+    }
+    catch (e) {
+        // library missing (offline) or link too long
+        g.fillStyle = '#b3392b';
+        g.font = '700 28px Segoe UI,sans-serif';
+        g.textAlign = 'center';
+        g.fillText('QR unavailable', size / 2, size / 2);
+        return false;
+    }
+}
+
 const qc = document.createElement('canvas');
 
-qc.width = qc.height = 128;
+qc.width = qc.height = 512;
 
-const qx = qc.getContext('2d');
+drawQR(qc, qrUrl());
 
-qx.fillStyle = '#fff';
+const qTex = new THREE.CanvasTexture(qc);
 
-qx.fillRect(0, 0, 128, 128);
+// keep the squares sharp on the 3D panel
+qTex.magFilter = THREE.NearestFilter;
 
-qx.fillStyle = '#000';
+qTex.minFilter = THREE.LinearFilter;
 
-let r = 7;
+qTex.generateMipmaps = false;
 
-const n = 21, s = 128 / n;
-
-const fnd = (a, b) => {
-    for (let i = 0; i < 7; i++)
-        for (let j = 0; j < 7; j++)
-            if (i == 0 || j == 0 || i == 6 || j == 6 || (i > 1 && i < 5 && j > 1 && j < 5))
-                qx.fillRect((a + i) * s, (b + j) * s, s + .5, s + .5);
-};
-
-for (let i = 0; i < n; i++)
-    for (let j = 0; j < n; j++) {
-        if ((i < 8 && j < 8) || (i > 12 && j < 8) || (i < 8 && j > 12))
-            continue;
-        r = (r * 9301 + 49297) % 233280;
-        if (r / 233280 > .5)
-            qx.fillRect(i * s, j * s, s + .5, s + .5);
-    }
-
-fnd(0, 0);
-
-fnd(14, 0);
-
-fnd(0, 14);
-
-add(new THREE.PlaneGeometry(.8, .8), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(qc) }), 0, .1, .05, kp);
+add(new THREE.PlaneGeometry(.8, .8), new THREE.MeshBasicMaterial({ map: qTex }), 0, .1, .05, kp);
 
 const lb = document.createElement('canvas');
 
@@ -1110,4 +1145,59 @@ $('camDrop').onclick = () => {
         return;
     closeCam();
     drop(ITEMS[m.i]);
+};
+
+// ===== 13. Large QR window (for scanning with a phone) =====
+// Redraw the QR on the 3D kiosk and in the window, and show warnings when a phone
+// could not open the link.
+function refreshQR() {
+    const url = qrUrl();
+    drawQR(qc, url);
+    qTex.needsUpdate = true;
+    drawQR($('qrBig'), url);
+    $('qrLink').textContent = url;
+    const host = location.hostname;
+    let saved = '';
+    try {
+        saved = localStorage.getItem(QR_KEY) || '';
+    }
+    catch (e) {
+    }
+    let warn = '';
+    if (!saved && location.protocol === 'file:')
+        warn = 'This page is opened as a file, so a phone cannot open this link. Host the app, or enter its link below.';
+    else if (!saved && (host === 'localhost' || host === '127.0.0.1'))
+        warn = 'localhost only works on this computer. Enter your computer\'s network address or a hosted https link below.';
+    $('qrWarn').textContent = warn;
+    $('qrInput').value = saved;
+}
+
+$('qrBtn').onclick = () => {
+    refreshQR();
+    $('qrModal').hidden = false;
+};
+
+$('qrClose').onclick = () => $('qrModal').hidden = true;
+
+$('qrSave').onclick = () => {
+    const v = $('qrInput').value.trim();
+    if (!/^https?:\/\/\S+$/i.test(v)) {
+        $('qrWarn').textContent = 'Enter a full link that starts with http:// or https://';
+        return;
+    }
+    try {
+        localStorage.setItem(QR_KEY, v.split('#')[0]);
+    }
+    catch (e) {
+    }
+    refreshQR();
+};
+
+$('qrReset').onclick = () => {
+    try {
+        localStorage.removeItem(QR_KEY);
+    }
+    catch (e) {
+    }
+    refreshQR();
 };
