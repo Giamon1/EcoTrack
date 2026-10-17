@@ -148,6 +148,7 @@
             <div class="bs">
               <span class="mu" id="bst"></span>
               <div class="bbtns">
+                <button id="qrBtn" type="button">Show QR</button>
                 <button class="p" id="scan" type="button">Simulate QR scan</button>
                 <button class="p" hidden="" id="camBtn" type="button">Open camera</button>
                 <button hidden="" id="exitSim" type="button">Exit session</button>
@@ -191,7 +192,26 @@
         <div class="items" id="camPick"></div>
       </div>
     </div>
+    <div class="cam" hidden="" id="qrModal" role="dialog" aria-modal="true" aria-label="QR code">
+      <div class="camBox">
+        <div class="camHead">
+          <h2>Scan to open EcoTrack</h2>
+          <button id="qrClose" type="button">Close</button>
+        </div>
+        <canvas aria-label="QR code that opens EcoTrack" class="qrBig" height="512" id="qrBig" width="512"></canvas>
+        <div class="mu" id="qrLink" style="word-break:break-all"></div>
+        <div class="err" id="qrWarn" role="status"></div>
+        <label for="qrInput">Link the QR opens</label>
+        <input id="qrInput" placeholder="https://your-site.example/ or http://192.168.1.5:5500/"/>
+        <div class="bbtns">
+          <button class="p" id="qrSave" type="button">Use this link</button>
+          <button id="qrReset" type="button">Reset</button>
+        </div>
+        <div class="mu">Phone cameras only work on https sites (or localhost), so host the app over https for the item scanner to run on a phone.</div>
+      </div>
+    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
     <script src="app.js"></script>
