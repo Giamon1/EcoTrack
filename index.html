@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+    <title>EcoTrack</title>
+    <link href="style.css" rel="stylesheet"/>
+  </head>
+  <body>
+    <svg aria-hidden="true" class="deco" preserveAspectRatio="none" viewBox="0 0 300 70">
+      <path d="M0 45Q40 12 90 38T180 30T300 26V70H0z" opacity=".55"/>
+      <path d="M0 56Q60 30 120 50T240 44T300 48V70H0z"/>
+    </svg>
+    <section id="auth">
+      <div class="card">
+        <div class="in">
+          <h1 class="logo">🌱 Eco<span>Track</span></h1>
+          <div class="mu">Track it. Get verified. Earn rewards.</div>
+          <div class="tabs" role="tablist">
+            <button class="on" id="tL" type="button">Log in</button>
+            <button id="tR" type="button">Register</button>
+          </div>
+          <div hidden="" id="fR">
+            <label for="nm">Full name</label>
+            <input autocomplete="name" id="nm" placeholder="Juan Dela Cruz"/>
+            <label for="gr">Section</label>
+            <input id="gr" placeholder="BSCS"/>
+          </div>
+          <label for="sid">Student ID</label>
+          <input autocomplete="username" id="sid" placeholder="23-1234-112"/>
+          <label for="pw">Password</label>
+          <input autocomplete="current-password" id="pw" type="password"/>
+          <div class="err" id="err" role="alert"></div>
+          <button class="p" id="go" style="width:100%;margin-top:6px" type="button">Log in</button>
+        </div>
+      </div>
+    </section>
+    <section hidden="" id="app">
+      <div class="shell">
+        <div class="top">
+          <h1 class="logo">🌱 Eco<span>Track</span></h1>
+          <div class="user">
+            <div class="chip" title="Points you can spend">🌿 <b id="hPts">0</b> pts</div>
+            <div class="who2">
+              <div id="hn"></div>
+              <div class="mu" id="hg"></div>
+            </div>
+            <div class="av" id="av"></div>
+            <button id="out" type="button">Log out</button>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="on" data-v="dash" id="n_dash" type="button">Dashboard</button>
+          <button data-v="hist" id="n_hist" type="button">History</button>
+          <button data-v="lead" id="n_lead" type="button">Leaderboard</button>
+          <button data-v="redeem" id="n_redeem" type="button">Redeem</button>
+          <button data-v="sim" id="n_sim" type="button">Simulator</button>
+        </nav>
+
+        <div id="v_dash">
+          <div class="hero">
+            <svg aria-hidden="true" class="hl" viewBox="0 0 120 90">
+              <path d="M10 70C10 40 34 18 66 18c0 30-24 52-56 52z"/>
+              <path d="M70 40C70 22 84 8 104 8c0 18-14 32-34 32z" opacity=".7"/>
+            </svg>
+            <div class="hm">
+              <div class="mu">Total points</div>
+              <div class="big" id="pts">0</div>
+              <div class="mu" id="ptsSub"></div>
+              <div class="bar"><i id="plantBar"></i></div>
+            </div>
+          </div>
+
+          <div class="tiles">
+            <div class="tile"><b id="nAct">0</b><span>Activities</span></div>
+            <div class="tile"><b id="nStr">0</b><span>Day streak</span></div>
+          </div>
+
+          <div class="cols">
+            <div>
+              <div class="box nr">
+                <div class="nric" id="nrIc">✏️</div>
+                <div class="nrb">
+                  <div class="mu">Next reward</div>
+                  <b id="nrName">Pencil</b>
+                  <div class="bar"><i id="nrBar"></i></div>
+                  <div class="mu" id="nrNote"></div>
+                </div>
+              </div>
+              <h2>Recent activity</h2>
+              <ul class="list" id="log"></ul>
+            </div>
+            <div>
+              <h2>Streak</h2>
+              <div class="box">
+                <div class="big" id="sCur" style="font-size:36px">0</div>
+                <div class="mu" style="display:flex;justify-content:space-between"><span>day streak</span><span id="sBest"></span></div>
+                <div class="wk" id="wk"></div>
+                <div class="mu" id="sMsg"></div>
+              </div>
+              <h2>How it works</h2>
+              <div class="box steps">
+                <div><b>1. Scan</b><br/>Scan your QR at the bin to start a session.</div>
+                <div><b>2. Drop</b><br/>Place your trash in the bin.</div>
+                <div><b>3. Auto-verified</b><br/>The AI identifies and sorts it, then adds points. No admin needed.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div hidden="" id="v_hist">
+          <h2>History</h2>
+          <ul class="list" id="hist"></ul>
+        </div>
+
+        <div hidden="" id="v_lead">
+          <h2>Leaderboard</h2>
+          <div class="chips" id="leadTabs">
+            <button class="on" data-m="all" type="button">All-time</button>
+            <button data-m="week" type="button">This week</button>
+            <button data-m="streak" type="button">Streaks</button>
+            <button data-m="section" type="button">Sections</button>
+          </div>
+          <div class="mu" id="leadNote"></div>
+          <div id="lead"></div>
+          <div class="mu lead-me" id="leadMe"></div>
+        </div>
+
+        <div hidden="" id="v_redeem">
+          <div class="box rbal">
+            <div>
+              <div class="mu">Available points</div>
+              <div class="big" id="rBal" style="font-size:56px">0</div>
+            </div>
+            <div class="mu" id="rSub"></div>
+          </div>
+          <div class="ok" id="rMsg" role="status"></div>
+          <h2>Rewards</h2>
+          <div class="rewards" id="rewards"></div>
+          <h2>My redemptions</h2>
+          <ul class="list" id="rdList"></ul>
+        </div>
+
+        <div class="wrap" hidden="" id="v_sim">
+          <div class="stage">
+            <div class="hint">Drag to rotate · scroll to zoom · click the QR kiosk to scan</div>
+            <canvas aria-label="3D smart bin and QR kiosk" id="c"></canvas>
+            <div class="bs">
+              <span class="mu" id="bst"></span>
+              <div class="bbtns">
+                <button class="p" id="scan" type="button">Simulate QR scan</button>
+                <button class="p" hidden="" id="camBtn" type="button">Open camera</button>
+                <button hidden="" id="exitSim" type="button">Exit session</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h2>Or drop manually</h2>
+            <div class="mu" id="tip" style="margin-bottom:10px"></div>
+            <div class="items" id="items"></div>
+            <div class="box" style="margin-top:20px">
+              <div class="mu">Points this session</div>
+              <div class="big" id="sp" style="font-size:44px">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <div class="cam" hidden="" id="cam" role="dialog" aria-modal="true" aria-label="Item scanner">
+      <div class="camBox">
+        <div class="camHead">
+          <h2>Show your item</h2>
+          <button id="camClose" type="button">Close</button>
+        </div>
+        <div class="camView">
+          <video id="camVid" muted="" playsinline=""></video>
+          <div class="camFrame"></div>
+        </div>
+        <div class="mu" id="camMsg"></div>
+        <div class="camRes" hidden="" id="camRes">
+          <div>
+            <b id="camName"></b>
+            <div class="mu" id="camCat"></div>
+          </div>
+          <div class="bbtns">
+            <button id="camRetry" type="button">Scan again</button>
+            <button class="p" id="camDrop" type="button">Drop in bin</button>
+          </div>
+        </div>
+        <div class="mu">Not right? Pick the item yourself:</div>
+        <div class="items" id="camPick"></div>
+      </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
