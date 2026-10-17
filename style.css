@@ -882,6 +882,18 @@ canvas#c {
   padding: 12px 14px;
 }
 
+.qrBig {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
 /* Respect reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
