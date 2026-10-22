@@ -1,14 +1,14 @@
 /*
  * EcoTrack: student eco tracker with a 3D smart bin simulator
- * Needs three.js (r128), qrcode-generator, TensorFlow.js, MobileNet and COCO-SSD
- * loaded before this file (see index.html).
+ * Needs three.js (r128), qrcode-generator, TensorFlow.js, MobileNet and COCO-SSD (see index.html).
  * Demo only: accounts are saved in this browser's localStorage.
+ *
+ * Flow: scan the QR kiosk (starts a session) -> "Open camera" shows items -> "Drop all in bin".
  */
 
 const $ = id => document.getElementById(id);
 
-// ===== 1. Trash categories and demo items
-// Item fields: n = name, k = category key, g = geometry, col = color =====
+// ===== 1. Trash categories, demo items, rewards =====
 const CATS = {
     rec: { n: 'Recyclable', c: '#39a0ff', i: 0, pts: 1, co2: .08 },
     bio: { n: 'Biodegradable', c: '#39ff6a', i: 1, pts: 0.5, co2: .03 },
@@ -27,7 +27,6 @@ const ITEMS = [
     { n: 'Plastic cup', k: 'rec', g: () => new THREE.CylinderGeometry(.1, .07, .2, 16), col: 0xffffff }
 ];
 
-// Rewards students can redeem with points. Fields: n = name, cost = points, ic = icon, d = description
 const REWARDS = [
     { n: 'Pencil', cost: 40, ic: '✏️', d: 'A sharpened pencil made from recycled paper.' },
     { n: 'Eco sticker pack', cost: 50, ic: '🌿', d: 'Waterproof stickers for your bottle or laptop.' },
@@ -41,29 +40,20 @@ const LV = [0, 50, 150, 300, 500];
 
 // ===== 2. App state and browser storage =====
 let users = {}, cur = null, active = false, busy = false, reg = false;
-let sess = 0; // points earned in the current simulator session
+let sess = 0;   // points earned in the current session
 let queue = []; // items waiting to be dropped one after another
 
-try {
-    users = JSON.parse(localStorage.getItem('sb_users') || '{}');
-}
-catch (e) {
-}
+try { users = JSON.parse(localStorage.getItem('sb_users') || '{}'); } catch (e) {}
 
 function saveU() {
-    try {
-        localStorage.setItem('sb_users', JSON.stringify(users));
-    }
-    catch (e) {
-    }
+    try { localStorage.setItem('sb_users', JSON.stringify(users)); } catch (e) {}
 }
 
 async function hash(s) {
     try {
         const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('sb:' + s));
         return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
-    }
-    catch (e) {
+    } catch (e) {
         return btoa(s);
     }
 }
@@ -80,7 +70,6 @@ function mode(r) {
 }
 
 $('tL').onclick = () => mode(false);
-
 $('tR').onclick = () => mode(true);
 
 $('go').onclick = async () => {
@@ -92,29 +81,18 @@ $('go').onclick = async () => {
     const h = await hash(pw);
     if (reg) {
         const nm = $('nm').value.trim();
-        if (!nm) {
-            e.textContent = 'Enter your full name.';
-            return;
-        }
-        if (users[sid]) {
-            e.textContent = 'That student ID is already registered. Log in instead.';
-            return;
-        }
+        if (!nm) { e.textContent = 'Enter your full name.'; return; }
+        if (users[sid]) { e.textContent = 'That student ID is already registered. Log in instead.'; return; }
         users[sid] = {
             name: nm,
             section: $('gr').value.trim() || 'No section',
-            h,
-            pts: 0,
-            spent: 0,
-            co2: 0,
+            h, pts: 0, spent: 0, co2: 0,
             c: { rec: 0, bio: 0, res: 0, haz: 0 },
-            log: [],
-            rd: []
+            log: [], rd: []
         };
         saveU();
         enter(sid);
-    }
-    else {
+    } else {
         if (!users[sid] || users[sid].h !== h) {
             e.textContent = 'Student ID or password is incorrect.';
             return;
@@ -124,11 +102,10 @@ $('go').onclick = async () => {
 };
 
 document.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !$('auth').hidden)
-        $('go').click();
+    if (e.key === 'Enter' && !$('auth').hidden) $('go').click();
 });
 
-// ===== 4. Navigation between tabs =====
+// ===== 4. Navigation and session =====
 const VS = ['dash', 'hist', 'lead', 'redeem', 'sim'];
 
 function show(v) {
@@ -136,10 +113,8 @@ function show(v) {
         $('v_' + x).hidden = x !== v;
         $('n_' + x).className = x === v ? 'on' : '';
     });
-    if (v !== 'redeem')
-        $('rMsg').textContent = '';
-    if (v === 'sim')
-        setTimeout(rs, 0);
+    if (v !== 'redeem') $('rMsg').textContent = '';
+    if (v === 'sim') setTimeout(rs, 0);
 }
 
 document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => show(b.dataset.v));
@@ -148,27 +123,22 @@ function enter(sid) {
     show('dash');
     cur = sid;
     active = false;
-    // Accounts created before the Redeem page existed need these fields
     const u = users[sid];
     if (typeof u.spent !== 'number') u.spent = 0;
     if (!Array.isArray(u.rd)) u.rd = [];
     $('auth').hidden = true;
     $('app').hidden = false;
     $('pw').value = '';
-    $('hn').textContent = users[sid].name;
-    $('hg').textContent = 'ID ' + sid + ' · ' + (users[sid].section || users[sid].grade || 'No section');
+    $('hn').textContent = u.name;
+    $('hg').textContent = 'ID ' + sid + ' · ' + (u.section || u.grade || 'No section');
     setTimeout(() => {
         rs();
         drawScreen('Scan QR to login', 'Use the kiosk', 0);
     }, 0);
     render();
-    // Opened by scanning the kiosk QR: go to the simulator and start the camera
+    // Opened by scanning the kiosk QR: go to the simulator and start the session
     if (location.hash === '#scan') {
-        try {
-            history.replaceState(null, '', location.pathname + location.search);
-        }
-        catch (e) {
-        }
+        try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
         show('sim');
         setTimeout(() => $('scan').click(), 400);
     }
@@ -184,20 +154,18 @@ $('out').onclick = () => {
     $('auth').hidden = false;
 };
 
+// QR scan only starts the session. The student then taps "Open camera" to show items.
 $('scan').onclick = () => {
-    if (busy)
-        return;
+    if (busy) return;
     active = true;
     sess = 0;
     render();
-    flash('Welcome, ' + users[cur].name.split(' ')[0] + '!', 'Show your items');
-    openCam(); // the QR scan sends the student to the camera
+    flash('Welcome, ' + users[cur].name.split(' ')[0] + '!', 'Open the camera');
 };
 
-// Exit: end the scan session (items can't be dropped until the QR is scanned again)
+// Exit: end the session (items can't be dropped until the QR is scanned again)
 $('exitSim').onclick = () => {
-    if (busy)
-        return;
+    if (busy) return;
     closeCam();
     active = false;
     sess = 0;
@@ -210,29 +178,23 @@ $('items').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}">${it.n}</butt
 
 $('items').onclick = e => {
     const b = e.target.closest('button');
-    if (b && active && !busy)
-        drop(ITEMS[b.dataset.i]);
+    if (b && active && !busy) drop(ITEMS[b.dataset.i]);
 };
 
-// ===== 5. Dashboard, history and leaderboard =====
+// ===== 5. Dashboard, history =====
 const dkey = t => {
     const d = new Date(t);
     return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
 };
 
 const fmt = t => new Date(t).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit'
 });
 
 function streak(u) {
     const ds = new Set(u.log.filter(e => e.t).map(e => dkey(e.t)));
     let c = 0, d = new Date();
-    if (!ds.has(dkey(d)))
-        d.setDate(d.getDate() - 1);
+    if (!ds.has(dkey(d))) d.setDate(d.getDate() - 1);
     while (ds.has(dkey(d))) {
         c++;
         d.setDate(d.getDate() - 1);
@@ -251,34 +213,26 @@ function streak(u) {
     for (let i = 6; i >= 0; i--) {
         const x = new Date();
         x.setDate(x.getDate() - i);
-        wk.push({
-            l: x.toLocaleDateString('en-US', { weekday: 'short' }),
-            on: ds.has(dkey(x))
-        });
+        wk.push({ l: x.toLocaleDateString('en-US', { weekday: 'short' }), on: ds.has(dkey(x)) });
     }
-    return {
-        c,
-        best,
-        wk
-    };
+    return { c, best, wk };
 }
 
 const row = e => `<li><div><b>${e.n}</b><div class="mu">${e.t ? fmt(e.t) + ' · ' : ''}${CATS[e.k].n}</div></div><span class="pill">auto-verified · +${e.p}</span></li>`;
 
 function render() {
-    if (!cur)
-        return;
+    if (!cur) return;
     const u = users[cur], sk = streak(u);
     $('av').textContent = u.name[0].toUpperCase();
     $('tip').textContent = active ? 'The bin scans, sorts and awards points automatically.' : 'Scan the QR kiosk first to start a session.';
-    $('bst').textContent = active ? 'Session active for ' + u.name + '.' : 'Scan the QR kiosk beside the bin to start.';
+    $('bst').textContent = active ? 'Session active for ' + u.name + '. Tap "Open camera" to show your items.' : 'Scan the QR kiosk beside the bin to start.';
     $('scan').textContent = active ? 'Session active' : 'Simulate QR scan';
     $('scan').disabled = active;
     $('exitSim').hidden = !active;
     $('exitSim').disabled = busy;
     $('camBtn').hidden = !active || busy;
     document.querySelectorAll('#items button').forEach(b => b.disabled = !active || busy);
-    $('pts').textContent = balance(u); // total points left after redemptions
+    $('pts').textContent = balance(u);
     $('sp').textContent = sess;
     $('nAct').textContent = u.log.length;
     $('nStr').textContent = sk.c;
@@ -294,19 +248,15 @@ function render() {
     renderHome(u);
 }
 
-// ===== 5a. Dashboard extras: level bar and next reward =====
+// Level bar (uses all points ever earned) and next reward
 function renderHome(u) {
-    // Level bar uses all points ever earned, so spending points never shrinks it
     let lv = 0;
-    LV.forEach((p, i) => {
-        if (u.pts >= p) lv = i;
-    });
+    LV.forEach((p, i) => { if (u.pts >= p) lv = i; });
     const nx = LV[lv + 1];
     $('plantBar').style.width = nx === undefined ? '100%' : Math.round((u.pts - LV[lv]) / (nx - LV[lv]) * 100) + '%';
     $('ptsSub').textContent = u.pts + ' earned · ' + (u.spent || 0) + ' spent';
     $('hPts').textContent = balance(u);
 
-    // Next reward the student cannot afford yet
     const bal = balance(u);
     const nr = REWARDS.find(r => r.cost > bal) || REWARDS[REWARDS.length - 1];
     $('nrIc').textContent = nr.ic;
@@ -315,9 +265,7 @@ function renderHome(u) {
     $('nrNote').textContent = bal >= nr.cost ? 'You can redeem every reward!' : (nr.cost - bal) + ' more points to redeem';
 }
 
-// ===== 5b. Redeem page =====
-// Total points earned stay in u.pts (level bar and leaderboard use it).
-// Points spent on rewards are tracked in u.spent, so balance = earned - spent.
+// ===== 5b. Redeem page (balance = earned - spent) =====
 const balance = u => u.pts - (u.spent || 0);
 
 const makeCode = () => 'ECO-' + Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -352,45 +300,28 @@ $('rewards').onclick = e => {
 };
 
 // ===== 6. 3D scene: smart bin and QR kiosk =====
-const cv = $('c'), R = new THREE.WebGLRenderer({
-    canvas: cv,
-    antialias: true
-});
-
+const cv = $('c'), R = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
 R.setPixelRatio(Math.min(devicePixelRatio, 2));
 
 const S = new THREE.Scene();
-
-// soft sky blue, same color as the distance fog so the grass fades into it
 S.background = new THREE.Color(0xb7d6e6);
-
 S.fog = new THREE.Fog(0xb7d6e6, 28, 70);
 
 const cam = new THREE.PerspectiveCamera(35, 1, .1, 120);
 
-// softer lighting so surfaces don't blow out to white
 S.add(new THREE.AmbientLight(0xffffff, .55));
-
 S.add(new THREE.HemisphereLight(0xdff0ff, 0x8a8a70, .25));
-
 const dl = new THREE.DirectionalLight(0xffffff, .8);
-
 dl.position.set(3, 6, 5);
-
 S.add(dl);
 
 const M = (c, m = .2, r = .6, e) => new THREE.MeshStandardMaterial({
-    color: c,
-    metalness: m,
-    roughness: r,
-    emissive: e || 0,
-    emissiveIntensity: e ? .15 : 0
+    color: c, metalness: m, roughness: r, emissive: e || 0, emissiveIntensity: e ? .15 : 0
 });
 
 const body = M(0x2b3135, .3, .55), dk = M(0x111416, .4, .6), wh = M(0xeef1f0, .1, .4);
 
 const bin = new THREE.Group();
-
 S.add(bin);
 
 const add = (g, m, x, y, z, p = bin) => {
@@ -400,27 +331,16 @@ const add = (g, m, x, y, z, p = bin) => {
     return o;
 };
 
-// cylinder body (brushed steel) with base ring, grooves and collar
-const steel = new THREE.MeshStandardMaterial({
-    color: 0x9aa5ab,
-    metalness: .85,
-    roughness: .3
-});
-
+// cylinder body with base ring, grooves, collar and funnel lid
+const steel = new THREE.MeshStandardMaterial({ color: 0x9aa5ab, metalness: .85, roughness: .3 });
 add(new THREE.CylinderGeometry(1, 1, 2.4, 48), steel, 0, 1.3, 0);
-
 add(new THREE.CylinderGeometry(1.04, 1.04, .22, 48), dk, 0, .12, 0);
-
 add(new THREE.CylinderGeometry(1.01, 1.01, .03, 48), dk, 0, 1.9, 0);
-
 add(new THREE.CylinderGeometry(1.01, 1.01, .03, 48), dk, 0, .5, 0);
-
 add(new THREE.CylinderGeometry(1.04, 1.04, .14, 48), wh, 0, 2.5, 0);
-
-// funnel-shaped lid
 add(new THREE.CylinderGeometry(.62, 1.02, .3, 48), wh, 0, 2.7, 0);
 
-// color-coded category lamps: four curved strips around the front of the body
+// color-coded category lamps
 const lamps = Object.values(CATS).map((c, i) => {
     const m = M(new THREE.Color(c.c).multiplyScalar(.35), 0, .5, new THREE.Color(c.c));
     m.emissiveIntensity = .15;
@@ -429,64 +349,37 @@ const lamps = Object.values(CATS).map((c, i) => {
     return m;
 });
 
-// hatch on top of the lid with two sliding half-doors
+// hatch with two sliding half-doors, and the scan beam
 add(new THREE.CylinderGeometry(.4, .4, .04, 32), dk, 0, 2.86, -.1);
-
 const dA = add(new THREE.CylinderGeometry(.44, .44, .05, 32, 1, false, 0, Math.PI), wh, 0, 2.9, -.1);
-
 const dB = add(new THREE.CylinderGeometry(.44, .44, .05, 32, 1, false, Math.PI, Math.PI), wh, 0, 2.9, -.1);
-
-const beam = add(new THREE.TorusGeometry(.5, .02, 8, 40), new THREE.MeshBasicMaterial({
-    color: 0x39ff6a,
-    transparent: true,
-    opacity: 0
-}), 0, 3.2, -.1);
-
+const beam = add(new THREE.TorusGeometry(.5, .02, 8, 40), new THREE.MeshBasicMaterial({ color: 0x39ff6a, transparent: true, opacity: 0 }), 0, 3.2, -.1);
 beam.rotation.x = Math.PI / 2;
 
-// display screen on the front of the cylinder
+// display screen
 const sc = document.createElement('canvas');
-
 sc.width = 320;
-
 sc.height = 160;
-
 const sx = sc.getContext('2d'), tex = new THREE.CanvasTexture(sc);
-
 add(new THREE.BoxGeometry(1.1, .66, .3), dk, 0, 2.0, .9);
-
 add(new THREE.PlaneGeometry(1.0, .5), new THREE.MeshBasicMaterial({ map: tex }), 0, 2.0, 1.052);
 
 // QR kiosk beside the bin
 const kiosk = new THREE.Group();
-
 kiosk.position.set(2.5, 0, .3);
-
 S.add(kiosk);
-
 add(new THREE.CylinderGeometry(.35, .4, .1, 24), dk, 0, .05, 0, kiosk);
-
 add(new THREE.BoxGeometry(.12, 1.5, .12), M(0x9aa3a8, .8, .3), 0, .8, 0, kiosk);
-
 const kp = new THREE.Group();
-
 kp.position.set(0, 1.75, .05);
-
 kp.rotation.x = -.25;
-
 kiosk.add(kp);
-
 add(new THREE.BoxGeometry(1, 1.3, .08), dk, 0, 0, 0, kp);
 
-// ---- Real QR code ----
-// The kiosk QR always opens the GitHub Pages site. The "#scan" at the end tells the app
-// to go straight to the simulator and start the camera after the student logs in.
-// Needs the qrcode-generator library (see index.html).
+// ---- Real QR code: opens the site, "#scan" starts the session after login ----
 const QR_URL = 'https://giamon1.github.io/EcoTrack/';
-
 const qrUrl = () => QR_URL + '#scan';
 
-// Draw a QR code for the text onto a canvas: black squares on white, with the quiet border scanners need
 function drawQR(canvas, text) {
     const g = canvas.getContext('2d'), size = canvas.width;
     g.fillStyle = '#fff';
@@ -501,12 +394,9 @@ function drawQR(canvas, text) {
         g.fillStyle = '#000';
         for (let y = 0; y < count; y++)
             for (let x = 0; x < count; x++)
-                if (q.isDark(y, x))
-                    g.fillRect(off + x * cell, off + y * cell, cell, cell);
+                if (q.isDark(y, x)) g.fillRect(off + x * cell, off + y * cell, cell, cell);
         return true;
-    }
-    catch (e) {
-        // library missing (offline) or link too long
+    } catch (e) {
         g.fillStyle = '#b3392b';
         g.font = '700 28px Segoe UI,sans-serif';
         g.textAlign = 'center';
@@ -516,50 +406,30 @@ function drawQR(canvas, text) {
 }
 
 const qc = document.createElement('canvas');
-
 qc.width = qc.height = 512;
-
 drawQR(qc, qrUrl());
-
 const qTex = new THREE.CanvasTexture(qc);
-
-// keep the squares sharp on the 3D panel
 qTex.magFilter = THREE.NearestFilter;
-
 qTex.minFilter = THREE.LinearFilter;
-
 qTex.generateMipmaps = false;
-
 add(new THREE.PlaneGeometry(.8, .8), new THREE.MeshBasicMaterial({ map: qTex }), 0, .1, .05, kp);
 
 const lb = document.createElement('canvas');
-
 lb.width = 256;
-
 lb.height = 40;
-
 const lx = lb.getContext('2d');
-
 lx.fillStyle = '#39ff6a';
-
 lx.font = 'italic 800 26px Segoe UI,sans-serif';
-
 lx.textAlign = 'center';
-
 lx.fillText('Scan to log in', 128, 30);
+add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(lb), transparent: true }), 0, -.5, .05, kp);
 
-add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(lb),
-    transparent: true
-}), 0, -.5, .05, kp);
-
-// ===== School background: covered outdoor walkway, school building, grass and trees =====
+// ===== School background: walkway, building, grass, trees =====
 {
-    // grass all around
     const grass = add(new THREE.PlaneGeometry(160, 160), M(0x5f8f3e, 0, .95), 0, -.03, 0, S);
     grass.rotation.x = -Math.PI / 2;
 
-    // concrete slab (walkway under the roof and the plaza in front of it)
+    // concrete slab
     const cc = document.createElement('canvas');
     cc.width = cc.height = 64;
     const cx = cc.getContext('2d');
@@ -573,13 +443,12 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     ct.repeat.set(20, 6.25);
     const slab = add(new THREE.PlaneGeometry(40, 12.5), new THREE.MeshStandardMaterial({ map: ct, roughness: .9, metalness: 0 }), 0, 0, 1.75, S);
     slab.rotation.x = -Math.PI / 2;
-    add(new THREE.BoxGeometry(40, .2, .4), M(0x7d8074, 0, .9), 0, .1, 8.2, S); // curb
+    add(new THREE.BoxGeometry(40, .2, .4), M(0x7d8074, 0, .9), 0, .1, 8.2, S);
 
-    // green guide line on the walkway
     const gl = add(new THREE.PlaneGeometry(40, .08), new THREE.MeshBasicMaterial({ color: 0x3f7a2e }), 0, .01, -3.4, S);
     gl.rotation.x = -Math.PI / 2;
 
-    // school building wall (tan) with a green base band and a maroon top edge
+    // building wall
     add(new THREE.BoxGeometry(60, 11, .5), M(0xbba982, 0, .95), 0, 5.5, -4.75, S);
     add(new THREE.BoxGeometry(60, 1.1, .12), M(0x3f6f33, 0, .8), 0, .55, -4.44, S);
     add(new THREE.BoxGeometry(60, .5, .7), M(0x6d4a3a, 0, .8), 0, 11.1, -4.6, S);
@@ -592,7 +461,7 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     const mh = new THREE.BoxGeometry(2, .06, .08);
     const sg = new THREE.BoxGeometry(2.4, .12, .25);
     for (let k = 0; k < 9; k++) {
-        if (k === 2) continue; // the door goes here
+        if (k === 2) continue; // door goes here
         const wx = -14.4 + k * 3.6;
         add(fg, frameM, wx, 3.1, -4.43, S);
         add(wg, glass, wx, 3.1, -4.39, S);
@@ -609,7 +478,7 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     add(new THREE.BoxGeometry(.7, 1, .02), glass, -7.78, 2.4, -4.28, S);
     add(new THREE.BoxGeometry(.7, 1, .02), glass, -6.62, 2.4, -4.28, S);
 
-    // shrubs along the wall
+    // shrubs
     const shrubG = new THREE.SphereGeometry(.5, 12, 8), shrubM = M(0x3d7a34, 0, .95);
     for (let k = 0; k < 8; k++) {
         const sh = add(shrubG, shrubM, -12.6 + k * 3.6, .4, -3.9, S);
@@ -646,9 +515,7 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     gx.fillText('Keep our school green', 256, 66);
     add(new THREE.PlaneGeometry(4, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gc) }), 3.5, 4.8, -4.37, S);
 
-    // ---- Roof over the walkway ----
-    // The roof is one-sided: you see it from underneath, but it is invisible from above,
-    // so the bin stays visible when you tilt the camera up.
+    // one-sided roof over the walkway (invisible from above)
     const rc = document.createElement('canvas');
     rc.width = rc.height = 32;
     const rcx = rc.getContext('2d');
@@ -662,16 +529,13 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     const roof = add(new THREE.PlaneGeometry(36, 7), new THREE.MeshStandardMaterial({ map: rt, roughness: .7, metalness: .1 }), 0, 5.8, -1, S);
     roof.rotation.x = Math.PI / 2;
 
-    // rafters under the roof and a green fascia beam on the front edge
     const rafG = new THREE.BoxGeometry(.25, .3, 7), rafM = M(0x6e6a5c, 0, .8);
     for (let rx = -18; rx <= 18; rx += 3) add(rafG, rafM, rx, 5.65, -1, S);
     add(new THREE.BoxGeometry(36, .5, .3), M(0x3f6f33, 0, .8), 0, 5.85, 2.5, S);
 
-    // ceiling lights
     const lightM = new THREE.MeshBasicMaterial({ color: 0xfff3c4 });
     [-9, -3, 3, 9].forEach(lx2 => add(new THREE.BoxGeometry(1.4, .08, .3), lightM, lx2, 5.72, -1, S));
 
-    // roof posts
     const postM = M(0xa8a392, 0, .85);
     [-15, -9, -4.5, 7.5, 13].forEach(px => {
         add(new THREE.BoxGeometry(.4, 5.6, .4), postM, px, 2.8, 2.3, S);
@@ -688,13 +552,8 @@ add(new THREE.PlaneGeometry(.9, .14), new THREE.MeshBasicMaterial({
     });
 }
 
-// ===== 7. Bin screen (drawn on a canvas texture) =====
-let st = {
-    a: 'Scan QR to login',
-    b: 'Use the kiosk',
-    p: 0,
-    c: '#39ff6a'
-};
+// ===== 7. Bin screen (canvas texture) =====
+let st = { a: 'Scan QR to login', b: 'Use the kiosk', p: 0, c: '#39ff6a' };
 
 function paint() {
     sx.fillStyle = '#071109';
@@ -720,29 +579,21 @@ function paint() {
 }
 
 function drawScreen(a, b, p, c) {
-    st = {
-        a,
-        b,
-        p,
-        c: c || '#39ff6a'
-    };
+    st = { a, b, p, c: c || '#39ff6a' };
     paint();
 }
 
 function flash(a, b) {
     drawScreen(a, b, 0);
     setTimeout(() => {
-        if (active && !busy)
-            drawScreen('Ready', 'Place item in bin', 0);
+        if (active && !busy) drawScreen('Ready', 'Place item in bin', 0);
     }, 2000);
 }
 
 paint();
 
 // ===== 8. Camera controls (drag to rotate, scroll to zoom) =====
-// Lower camera and higher target than before, so the roof shows at the top of the view
 let th = .5, ph = .1, dist = 11.5;
-
 const tg = new THREE.Vector3(1.1, 2.4, 0);
 
 function cm() {
@@ -762,26 +613,22 @@ cv.onpointerdown = e => {
 cv.onpointerup = e => {
     dr = false;
     // a click (not a drag) on the QR kiosk counts as scanning it
-    if (Math.hypot(e.clientX - dx0, e.clientY - dy0) < 5)
-        clickScene(e);
+    if (Math.hypot(e.clientX - dx0, e.clientY - dy0) < 5) clickScene(e);
 };
 
 function clickScene(e) {
-    if (!cur || active || busy)
-        return;
+    if (!cur || active || busy) return;
     const box = cv.getBoundingClientRect();
     const ray = new THREE.Raycaster();
     ray.setFromCamera({
         x: (e.clientX - box.left) / box.width * 2 - 1,
         y: -((e.clientY - box.top) / box.height) * 2 + 1
     }, cam);
-    if (ray.intersectObject(kiosk, true).length)
-        $('scan').click();
+    if (ray.intersectObject(kiosk, true).length) $('scan').click();
 }
 
 cv.onpointermove = e => {
-    if (!dr)
-        return;
+    if (!dr) return;
     th -= (e.clientX - lx0) * .008;
     ph = Math.max(-.05, Math.min(.9, ph + (e.clientY - ly0) * .006));
     lx0 = e.clientX;
@@ -795,8 +642,7 @@ cv.addEventListener('wheel', e => {
 
 function rs() {
     const w = cv.clientWidth, h = cv.clientHeight;
-    if (!w)
-        return;
+    if (!w) return;
     R.setSize(w, h, false);
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
@@ -811,16 +657,11 @@ function drop(it) {
     busy = true;
     render();
     item = new THREE.Mesh(it.g(), M(it.col, .1, .5));
-    if (it.n === 'Banana peel')
-        item.rotation.x = Math.PI / 2;
+    if (it.n === 'Banana peel') item.rotation.x = Math.PI / 2;
     item.position.set(0, 5.4, -.1);
     S.add(item);
     drawScreen('Detecting...', 'Item detected', .15);
-    anim = {
-        it,
-        t: 0,
-        ph: 0
-    };
+    anim = { it, t: 0, ph: 0 };
 }
 
 function tick(dt) {
@@ -843,8 +684,7 @@ function tick(dt) {
             a.t = 0;
             drawScreen('Scanning...', 'AI vision analyzing', .4);
         }
-    }
-    else if (a.ph === 1) {
+    } else if (a.ph === 1) {
         beam.material.opacity = .9;
         beam.position.y = 3.4 - Math.min(a.t, 1) * .6;
         item.rotation.y += dt * 4;
@@ -855,15 +695,13 @@ function tick(dt) {
             const c = CATS[a.it.k];
             drawScreen(a.it.n, 'Identified: ' + c.n, .7, c.c);
         }
-    }
-    else if (a.ph === 2) {
+    } else if (a.ph === 2) {
         lamps[CATS[a.it.k].i].emissiveIntensity = 1.6;
         if (a.t > 1) {
             a.ph = 3;
             a.t = 0;
         }
-    }
-    else if (a.ph === 3) {
+    } else if (a.ph === 3) {
         lamps[CATS[a.it.k].i].emissiveIntensity = 1.6;
         item.position.y -= dt * 3;
         item.scale.multiplyScalar(1 - dt * 1.2);
@@ -871,15 +709,13 @@ function tick(dt) {
             a.ph = 4;
             a.t = 0;
         }
-    }
-    else if (a.ph === 4 && a.t > .5) {
+    } else if (a.ph === 4 && a.t > .5) {
         S.remove(item);
         award(a.it);
         anim = null;
         busy = false;
         render();
-        if (queue.length && active)
-            drop(queue.shift()); // next item in the batch
+        if (queue.length && active) drop(queue.shift()); // next item in the batch
     }
 }
 
@@ -889,17 +725,11 @@ function award(it) {
     sess += c.pts;
     u.co2 += c.co2;
     u.c[it.k]++;
-    u.log.unshift({
-        n: it.n,
-        k: it.k,
-        p: c.pts,
-        t: Date.now()
-    });
+    u.log.unshift({ n: it.n, k: it.k, p: c.pts, t: Date.now() });
     saveU();
     drawScreen('+' + c.pts + ' points!', c.n + ' sorted', 1, c.c);
     setTimeout(() => {
-        if (active && !busy)
-            drawScreen('Ready', 'Place item in bin', 0);
+        if (active && !busy) drawScreen('Ready', 'Place item in bin', 0);
     }, 2200);
 }
 
@@ -911,8 +741,7 @@ let last = performance.now();
     last = n;
     tick(dt);
     cm();
-    if (cv.offsetParent)
-        R.render(S, cam);
+    if (cv.offsetParent) R.render(S, cam);
     requestAnimationFrame(loop);
 })(last);
 
@@ -926,12 +755,11 @@ const LEAD_NOTES = {
     section: 'Total points by section.'
 };
 
-const esc = text => String(text).replace(/[&<>"]/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+const esc = text => String(text).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
-// Build one list of students with every number the board can sort by
 function leaderboardStudents() {
     const weekAgo = Date.now() - 7 * 864e5;
-    const students = Object.entries(users).map(([id, u]) => ({
+    return Object.entries(users).map(([id, u]) => ({
         name: u.name,
         section: u.section || u.grade || 'No section',
         total: u.pts,
@@ -939,23 +767,21 @@ function leaderboardStudents() {
         streak: streak(u).c,
         me: id === cur
     }));
-    return students;
 }
 
-// Turn the students into board rows for the selected tab
 function leaderboardRows() {
     const students = leaderboardStudents();
     if (leadMode === 'section') {
         const sections = {};
         students.forEach(s => {
-            if (!sections[s.section]) sections[s.section] = {name: s.section, count: 0, value: 0, me: false};
+            if (!sections[s.section]) sections[s.section] = { name: s.section, count: 0, value: 0, me: false };
             sections[s.section].count++;
             sections[s.section].value += s.total;
             if (s.me) sections[s.section].me = true;
         });
-        return Object.values(sections).map(s => ({name: s.name, sub: s.count + (s.count === 1 ? ' student' : ' students'), value: s.value, unit: 'pts', me: s.me}));
+        return Object.values(sections).map(s => ({ name: s.name, sub: s.count + (s.count === 1 ? ' student' : ' students'), value: s.value, unit: 'pts', me: s.me }));
     }
-    const field = {all: 'total', week: 'week', streak: 'streak'}[leadMode];
+    const field = { all: 'total', week: 'week', streak: 'streak' }[leadMode];
     return students.map(s => ({
         name: s.name,
         sub: s.section,
@@ -987,7 +813,7 @@ $('leadTabs').onclick = e => {
     renderLeaderboard();
 };
 
-// ===== 12. Camera scanner: detects every item and counts them =====
+// ===== 12. Item camera: detects every item and counts them =====
 // COCO-SSD finds all objects in view; MobileNet is a fallback for single items.
 // Values are ITEMS indexes: 0 bottle, 1 paper, 2 can, 3 banana, 4 apple, 5 chips, 6 battery, 7 cup.
 const COCO = {
@@ -1006,31 +832,24 @@ const RULES = [
     [7, /\bcup\b|mug|beer glass/]
 ];
 
-// Names that contain a keyword above but mean something else
 const SKIP = /ashcan|trash|garbage|opener|computer|laptop|bucket/;
 
 let stream = null, model = null, det = null, camOn = false, found = {}, frames = [];
 
-$('camPick').innerHTML = ITEMS.map((it, i) => `<button data-i="${i}" type="button">${it.n}</button>`).join('');
-
 const setCam = t => $('camMsg').textContent = t;
 
-// Pick the first guess that matches one of the demo items
 function match(preds) {
     for (const p of preds) {
-        if (p.probability < .12)
-            continue;
+        if (p.probability < .12) continue;
         const label = p.className.toLowerCase();
-        if (SKIP.test(label))
-            continue;
+        if (SKIP.test(label)) continue;
         for (const [i, re] of RULES)
-            if (re.test(label))
-                return { i, label: p.className.split(',')[0] };
+            if (re.test(label)) return { i, label: p.className.split(',')[0] };
     }
     return null;
 }
 
-// Show the list of detected items with + / − quantity buttons
+// List of detected items with + / − quantity buttons
 function renderFound() {
     const ids = Object.keys(found).filter(k => found[k] > 0);
     $('camRes').hidden = !ids.length;
@@ -1054,7 +873,6 @@ $('camList').onclick = e => {
     renderFound();
 };
 
-// Draw a colored box and name over every detected object
 function drawBoxes(dets) {
     const o = $('camOv'), v = $('camVid');
     o.width = v.videoWidth;
@@ -1092,8 +910,7 @@ async function openCam() {
     renderFound();
     setCam('Starting camera...');
     try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
-            throw new Error('nocam');
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nocam');
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
         if (!camOn) {
             stopStream();
@@ -1102,11 +919,9 @@ async function openCam() {
         const v = $('camVid');
         v.srcObject = stream;
         await v.play();
-        if (v.videoWidth)
-            v.parentNode.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
-    }
-    catch (err) {
-        setCam('Camera not available. Allow camera access (it needs https), or add the items below.');
+        if (v.videoWidth) v.parentNode.style.aspectRatio = v.videoWidth + ' / ' + v.videoHeight;
+    } catch (err) {
+        setCam('Camera not available. Allow camera access (it needs https) and try again.');
         return;
     }
     if (!det || !model) {
@@ -1116,9 +931,8 @@ async function openCam() {
                 det || cocoSsd.load({ base: 'mobilenet_v2' }),
                 model || mobilenet.load()
             ]);
-        }
-        catch (err) {
-            setCam('Could not load the AI models. Check your internet connection, or add the items below.');
+        } catch (err) {
+            setCam('Could not load the AI models. Check your internet connection and try again.');
             return;
         }
     }
@@ -1154,15 +968,12 @@ async function scanLoop() {
                 return;
             }
         }
-    }
-    catch (err) {
-    }
+    } catch (err) {}
     setTimeout(scanLoop, 400);
 }
 
 function stopStream() {
-    if (stream)
-        stream.getTracks().forEach(t => t.stop());
+    if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null;
     $('camVid').srcObject = null;
 }
@@ -1175,7 +986,6 @@ function closeCam() {
 }
 
 $('camClose').onclick = closeCam;
-
 $('camBtn').onclick = openCam;
 
 $('camRetry').onclick = () => {
@@ -1186,14 +996,6 @@ $('camRetry').onclick = () => {
     o.getContext('2d').clearRect(0, 0, o.width, o.height);
     setCam('Place all items in view, spaced apart so each one is visible.');
     if (det && model) scanLoop();
-};
-
-$('camPick').onclick = e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    found[b.dataset.i] = Math.min(20, (found[b.dataset.i] || 0) + 1);
-    renderFound();
-    setCam('Check the quantities. Use + / − to fix any mistakes.');
 };
 
 // Drop everything found, one item after another
